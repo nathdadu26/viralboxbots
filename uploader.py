@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
 """
 Telegram File Uploader Bot with URL Shortener
-
-Workflow:
-1. User sets API key: /set_api <API_KEY>
-2. User sends media
-3. Bot uploads to storage channel
-4. Bot generates worker link
-5. Bot shortens link using user's API key
-6. Bot sends shortened link to user
+Fixed for Koyeb deployment
 """
 
 import os
@@ -28,9 +21,13 @@ load_dotenv()
 BOT_TOKEN = os.getenv("UPLOADER_BOT_TOKEN")
 MONGO_URI = os.getenv("MONGODB_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "viralbox_db")
-STORAGE_CHANNEL_ID = int(os.getenv("STORAGE_CHANNEL_ID"))
-WORKER_DOMAIN = os.getenv("WORKER_DOMAIN")
+STORAGE_CHANNEL_ID = int(os.getenv("STORAGE_CHANNEL_ID", "0"))
+WORKER_DOMAIN = os.getenv("WORKER_DOMAIN", "")
 VIRALBOX_DOMAIN = os.getenv("VIRALBOX_DOMAIN", "viralbox.in")
+
+# Validate config
+if not all([BOT_TOKEN, MONGO_URI, STORAGE_CHANNEL_ID, WORKER_DOMAIN]):
+    raise RuntimeError("Missing required environment variables for Uploader Bot")
 
 # ---------------- MONGODB ----------------
 try:
@@ -39,9 +36,9 @@ try:
     mappings_col = mongo_db["mappings"]
     links_col = mongo_db["links"]
     user_apis_col = mongo_db["user_apis"]
-    print(f"✅ Connected to MongoDB: {MONGO_DB_NAME}")
+    print(f"✅ Uploader: Connected to MongoDB: {MONGO_DB_NAME}")
 except PyMongoError as e:
-    raise RuntimeError(f"❌ MongoDB connection failed: {e}")
+    raise RuntimeError(f"❌ Uploader: MongoDB connection failed: {e}")
 
 
 # ---------------- UTIL ----------------
@@ -62,7 +59,7 @@ def shorten_url(api_key: str, long_url: str) -> str:
             return data.get("shortenedUrl", "")
         return ""
     except Exception as e:
-        print(f"❌ Shortening failed: {e}")
+        print(f"❌ Uploader: Shortening failed: {e}")
         return ""
 
 
@@ -175,10 +172,10 @@ async def upload_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         
-        print(f"✅ Upload complete: {mapping_id} -> {short_url}")
+        print(f"✅ Uploader: Upload complete: {mapping_id} -> {short_url}")
         
     except Exception as e:
-        print(f"❌ Upload failed: {e}")
+        print(f"❌ Uploader: Upload failed: {e}")
         await msg.reply_text(
             "❌ Upload failed! Please try again later."
         )
@@ -187,9 +184,6 @@ async def upload_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------- MAIN ----------------
 async def main():
     """Initialize and run the bot"""
-    if not all([BOT_TOKEN, MONGO_URI, STORAGE_CHANNEL_ID, WORKER_DOMAIN]):
-        raise RuntimeError("❌ Missing required environment variables!")
-    
     # Build application
     app = Application.builder().token(BOT_TOKEN).build()
     
@@ -213,16 +207,9 @@ async def main():
     print(f"💾 Database: {MONGO_DB_NAME}")
     
     # Start polling
-    await app.run_polling()
+    await app.run_polling(drop_pending_updates=True)
 
 
 # ---------------- ENTRY POINT ----------------
 if __name__ == "__main__":
-    try:
-        import nest_asyncio
-        nest_asyncio.apply()
-        asyncio.get_event_loop().run_until_complete(main())
-    except KeyboardInterrupt:
-        print("\n👋 Bot stopped by user")
-    except Exception as e:
-        print(f"❌ Fatal error: {e}")
+    asyncio.run(main())
