@@ -39,15 +39,25 @@ MONGO_DB = os.getenv("MONGO_DB_NAME")
 MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "mappings")
 
 # ---------------- LOGGING ----------------
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
+
+# Disable verbose logs from libraries
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
 # ---------------- MONGODB ----------------
 try:
     mongo_client = MongoClient(MONGO_URI)
     mongo_db = mongo_client[MONGO_DB]
     mappings_col = mongo_db[MONGO_COLLECTION]
+    logger.info("✅ MongoDB connected successfully")
 except PyMongoError as e:
+    logger.error(f"❌ MongoDB connection failed: {e}")
     raise RuntimeError(f"MongoDB connection failed: {e}")
 
 # ---------------- UTIL ----------------
@@ -67,18 +77,22 @@ def join_keyboard(mapping: str):
 
 # ---------------- START HANDLER ----------------
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "Unknown"
+    
     if not context.args:
+        logger.warning(f"⚠️ Invalid access attempt by user {user_id} (@{username}) - No mapping provided")
         await update.message.reply_text(
             "❌ Invalid access.\nUse a valid file link."
         )
         return
 
     mapping = context.args[0]
-    user_id = update.effective_user.id
 
     # Force Join Check
     joined = await is_user_joined(context.bot, user_id)
     if not joined:
+        logger.info(f"📌 Force Join triggered for user {user_id} (@{username}) - mapping: {mapping}")
         await update.message.reply_text(
             "⚠️ You have not joined the main channel yet.\nTo access this file, please join the main channel first 👇",
             reply_markup=join_keyboard(mapping),
@@ -89,6 +103,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # MongoDB Lookup
     doc = mappings_col.find_one({"mapping": mapping})
     if not doc or "message_id" not in doc:
+        logger.warning(f"⚠️ File not found for mapping: {mapping} (user: {user_id})")
         await update.message.reply_text("❌ File not found or link expired.")
         return
 
@@ -105,9 +120,11 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from_chat_id=STORAGE_CHANNEL_ID,
             message_id=message_id,
         )
+        
+        logger.info(f"✅ File sent successfully to user {user_id} (@{username}) - message_id: {message_id}")
 
-    except Exception:
-        logger.exception("Failed to copy message")
+    except Exception as e:
+        logger.error(f"❌ Failed to copy message for user {user_id} (@{username}): {str(e)}")
         await update.message.reply_text("❌ File not found or access denied.")
 
 
@@ -120,12 +137,13 @@ def main():
         F_SUB_CHANNEL_LINK,
         MONGO_URI,
     ]):
+        logger.error("❌ Missing required .env configuration")
         raise RuntimeError("Missing required .env configuration")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_handler))
 
-    logger.info("File Server Bot (Force Join + MongoDB) running...")
+    logger.info("🚀 File Server Bot (Force Join + MongoDB) running...")
     app.run_polling()
 
 
