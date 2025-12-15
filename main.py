@@ -1,62 +1,56 @@
 #!/usr/bin/env python3
 """
 Main Entry Point for Koyeb Deployment
-Runs all 3 bots in parallel using asyncio
+Runs all 3 bots using multiprocessing (no event loop conflicts)
 """
 
 import os
-import asyncio
-import signal
 import sys
+import signal
+import time
+from multiprocessing import Process
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Import bot modules
-from uploader import main as uploader_main
-from fileserver import main as fileserver_main
-from converter import polling_loop as converter_main
-
-
-def run_converter_sync():
-    """Run converter bot (blocking synchronous)"""
+def run_converter():
+    """Run converter bot"""
     try:
+        from converter import polling_loop
         print("🔄 Starting Converter Bot...")
-        converter_main()
+        polling_loop()
     except Exception as e:
         print(f"❌ Converter Bot failed: {e}")
+        sys.exit(1)
 
 
-async def run_all_bots():
-    """Run all bots concurrently"""
-    print("🚀 Starting all bots on Koyeb...")
-    
-    # Create tasks for async bots
-    uploader_task = asyncio.create_task(uploader_main())
-    fileserver_task = asyncio.create_task(fileserver_main())
-    
-    # Run converter in executor (it's synchronous)
-    converter_task = asyncio.get_event_loop().run_in_executor(
-        None, 
-        run_converter_sync
-    )
-    
+def run_uploader():
+    """Run uploader bot"""
     try:
-        # Wait for all bots
-        await asyncio.gather(
-            uploader_task,
-            fileserver_task,
-            converter_task,
-            return_exceptions=True
-        )
+        import asyncio
+        from uploader import main as uploader_main
+        print("📤 Starting Uploader Bot...")
+        asyncio.run(uploader_main())
     except Exception as e:
-        print(f"❌ Error running bots: {e}")
+        print(f"❌ Uploader Bot failed: {e}")
+        sys.exit(1)
+
+
+def run_fileserver():
+    """Run fileserver bot"""
+    try:
+        from fileserver import main as fileserver_main
+        print("📁 Starting File Server Bot...")
+        fileserver_main()
+    except Exception as e:
+        print(f"❌ File Server Bot failed: {e}")
+        sys.exit(1)
 
 
 def signal_handler(signum, frame):
     """Handle shutdown signals"""
-    print("\n⚠️ Shutdown signal received. Stopping bots...")
+    print("\n⚠️ Shutdown signal received. Stopping all bots...")
     sys.exit(0)
 
 
@@ -74,19 +68,78 @@ if __name__ == "__main__":
         "UPLOADER_BOT_TOKEN",
         "CONVERTER_BOT_TOKEN", 
         "FILE_SERVER_BOT_TOKEN",
-        "MONGODB_URI"
+        "MONGODB_URI",
+        "STORAGE_CHANNEL_ID",
+        "BOT_USERNAME",
+        "F_SUB_CHANNEL_ID",
+        "F_SUB_CHANNEL_LINK",
+        "WORKER_DOMAIN"
     ]
     
     missing = [var for var in required_vars if not os.getenv(var)]
     if missing:
-        print(f"❌ Missing environment variables: {', '.join(missing)}")
+        print(f"❌ Missing environment variables:")
+        for var in missing:
+            print(f"   - {var}")
+        print("\n💡 Add these in Koyeb Environment Variables settings")
         sys.exit(1)
     
-    # Run all bots
+    print("✅ All environment variables found")
+    print("🚀 Starting all bots in parallel...\n")
+    
+    # Create processes for each bot
+    processes = []
+    
     try:
-        asyncio.run(run_all_bots())
+        # Start converter bot
+        p1 = Process(target=run_converter, name="Converter")
+        p1.start()
+        processes.append(p1)
+        time.sleep(2)
+        
+        # Start uploader bot
+        p2 = Process(target=run_uploader, name="Uploader")
+        p2.start()
+        processes.append(p2)
+        time.sleep(2)
+        
+        # Start fileserver bot
+        p3 = Process(target=run_fileserver, name="FileServer")
+        p3.start()
+        processes.append(p3)
+        
+        print("\n✅ All bots started successfully!")
+        print("📊 Monitoring bot processes...\n")
+        
+        # Keep main process alive and monitor children
+        while True:
+            for p in processes:
+                if not p.is_alive():
+                    print(f"⚠️ {p.name} bot stopped! Restarting...")
+                    processes.remove(p)
+                    
+                    # Restart based on name
+                    if p.name == "Converter":
+                        new_p = Process(target=run_converter, name="Converter")
+                    elif p.name == "Uploader":
+                        new_p = Process(target=run_uploader, name="Uploader")
+                    else:
+                        new_p = Process(target=run_fileserver, name="FileServer")
+                    
+                    new_p.start()
+                    processes.append(new_p)
+            
+            time.sleep(10)
+            
     except KeyboardInterrupt:
-        print("\n👋 Bots stopped by user")
+        print("\n👋 Stopping all bots...")
     except Exception as e:
         print(f"❌ Fatal error: {e}")
-        sys.exit(1)
+    finally:
+        # Terminate all processes
+        for p in processes:
+            if p.is_alive():
+                p.terminate()
+                p.join(timeout=5)
+        print("🛑 All bots stopped")
+        sys.exit(0)
