@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
 """
 Telegram File Server Bot (MongoDB + Force Join)
-Fixed for multiprocessing - NO asyncio.run() conflicts
+
+Features:
+- Only works via deep links: https://t.me/<BOT_USERNAME>?start=<mapping>
+- mapping -> MongoDB lookup -> message_id
+- Copies file from STORAGE_CHANNEL to user
+- Force Join enabled:
+  * Checks if user joined F_SUB_CHANNEL_ID
+  * If not, shows two buttons:
+      - Join Now ✅ (channel link)
+      - Join & Get File ♻️ (re-check)
+
+Bot does NOT accept any files or commands except /start.
 """
 
 import os
@@ -18,18 +29,14 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("FILE_SERVER_BOT_TOKEN")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
-STORAGE_CHANNEL_ID = int(os.getenv("STORAGE_CHANNEL_ID", "0"))
+STORAGE_CHANNEL_ID = int(os.getenv("STORAGE_CHANNEL_ID"))
 
-F_SUB_CHANNEL_ID = int(os.getenv("F_SUB_CHANNEL_ID", "0"))
-F_SUB_CHANNEL_LINK = os.getenv("F_SUB_CHANNEL_LINK", "")
+F_SUB_CHANNEL_ID = int(os.getenv("F_SUB_CHANNEL_ID"))
+F_SUB_CHANNEL_LINK = os.getenv("F_SUB_CHANNEL_LINK")
 
 MONGO_URI = os.getenv("MONGODB_URI")
-MONGO_DB = os.getenv("MONGO_DB_NAME", "viralbox_db")
+MONGO_DB = os.getenv("MONGO_DB_NAME")
 MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "mappings")
-
-# Validate config
-if not all([BOT_TOKEN, BOT_USERNAME, STORAGE_CHANNEL_ID, F_SUB_CHANNEL_ID, F_SUB_CHANNEL_LINK, MONGO_URI]):
-    raise RuntimeError("Missing required environment variables for File Server Bot")
 
 # ---------------- LOGGING ----------------
 logging.basicConfig(
@@ -85,7 +92,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Force Join Check
     joined = await is_user_joined(context.bot, user_id)
     if not joined:
-        logger.info(f"🔌 Force Join triggered for user {user_id} (@{username}) - mapping: {mapping}")
+        logger.info(f"📌 Force Join triggered for user {user_id} (@{username}) - mapping: {mapping}")
         await update.message.reply_text(
             "⚠️ You have not joined the main channel yet.\nTo access this file, please join the main channel first 👇",
             reply_markup=join_keyboard(mapping),
@@ -123,14 +130,21 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------------- MAIN ----------------
 def main():
-    """Initialize and run the bot - NO asyncio.run()"""
+    if not all([
+        BOT_TOKEN,
+        STORAGE_CHANNEL_ID,
+        F_SUB_CHANNEL_ID,
+        F_SUB_CHANNEL_LINK,
+        MONGO_URI,
+    ]):
+        logger.error("❌ Missing required .env configuration")
+        raise RuntimeError("Missing required .env configuration")
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_handler))
 
     logger.info("🚀 File Server Bot (Force Join + MongoDB) running...")
-    
-    # Start polling (blocking call - manages its own event loop)
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling()
 
 
 if __name__ == "__main__":

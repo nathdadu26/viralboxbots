@@ -1,7 +1,5 @@
-#!/usr/bin/env python3
-"""
-Converter Bot - Fixed for Koyeb
-"""
+# bot.py  (Polling Mode - VPS Ready)
+# Logic identical to converter.js (no behaviour change)
 
 import os
 import time
@@ -9,6 +7,7 @@ import requests
 from urllib.parse import urlparse
 from pymongo import MongoClient
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 
@@ -20,17 +19,14 @@ DB_NAME = os.getenv("MONGO_DB_NAME", "viralbox_db")
 VIRALBOX_DOMAIN = os.getenv("VIRALBOX_DOMAIN", "viralbox.in")
 
 if not BOT_TOKEN or not MONGODB_URI:
-    raise RuntimeError("CONVERTER_BOT_TOKEN and MONGODB_URI must be set")
+    raise RuntimeError("BOT_TOKEN and MONGODB_URI must be in .env")
 
 # ------------------ DB SETUP ------------------ #
-try:
-    client = MongoClient(MONGODB_URI)
-    db = client[DB_NAME]
-    links_col = db["links"]
-    user_apis_col = db["user_apis"]
-    print(f"✅ Converter: Connected to MongoDB: {DB_NAME}")
-except Exception as e:
-    raise RuntimeError(f"❌ Converter: MongoDB connection failed: {e}")
+client = MongoClient(MONGODB_URI)
+db = client[DB_NAME]
+
+links_col = db["links"]          # { longURL, shortURL }
+user_apis_col = db["user_apis"]  # { userId, apiKey }
 
 
 # ------------------ HELPERS ------------------ #
@@ -52,14 +48,10 @@ def is_viralbox(url):
 
 
 def send_message(chat_id, text):
-    try:
-        requests.post(
-            f"{TELEGRAM_API}/sendMessage",
-            json={"chat_id": chat_id, "text": text},
-            timeout=10
-        )
-    except Exception as e:
-        print(f"❌ Converter: Send message failed: {e}")
+    requests.post(
+        f"{TELEGRAM_API}/sendMessage",
+        json={"chat_id": chat_id, "text": text}
+    )
 
 
 def send_media(chat_id, mtype, file_id, caption=None):
@@ -76,12 +68,9 @@ def send_media(chat_id, mtype, file_id, caption=None):
         send_message(chat_id, caption or "")
         return
 
-    try:
-        payload = {"chat_id": chat_id, "caption": caption}
-        payload[mtype] = file_id
-        requests.post(f"{TELEGRAM_API}/{endpoint}", json=payload, timeout=10)
-    except Exception as e:
-        print(f"❌ Converter: Send media failed: {e}")
+    payload = {"chat_id": chat_id, "caption": caption}
+    payload[mtype] = file_id
+    requests.post(f"{TELEGRAM_API}/{endpoint}", json=payload)
 
 
 # ------------------ DATABASE FUNCTIONS ------------------ #
@@ -126,8 +115,7 @@ def short_with_user_token(apiKey, longURL):
 
         return None
 
-    except Exception as e:
-        print(f"❌ Converter: Shortening failed: {e}")
+    except Exception:
         return None
 
 
@@ -144,7 +132,7 @@ def process_message(msg):
         user_api = get_api_key(user_id)
         
         if user_api:
-            send_message(chat_id, "🔗 Send A Link To Convert !")
+            send_message(chat_id, "📁 Send A Link To Convert !")
         else:
             send_message(chat_id,
 f"👋 Welcome {name} to viralbox.in Bot!\n\n"
@@ -232,7 +220,7 @@ f"/help - Support - @viralbox_support")
 # ------------------ BOT POLLING LOOP ------------------ #
 
 def polling_loop():
-    print("🔄 Converter Bot: Starting polling mode...")
+    print("Bot Running in Polling Mode…")
     offset = None
 
     while True:
@@ -247,14 +235,11 @@ def polling_loop():
                 offset = upd["update_id"] + 1
 
                 if "message" in upd:
-                    try:
-                        process_message(upd["message"])
-                    except Exception as e:
-                        print(f"❌ Converter: Message processing error: {e}")
+                    process_message(upd["message"])
 
         except Exception as e:
-            print(f"❌ Converter: Polling error: {e}")
-            time.sleep(5)
+            print("Error:", e)
+            time.sleep(2)
 
 
 # ------------------ START BOT ------------------ #
