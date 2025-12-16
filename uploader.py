@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
 Telegram File Uploader Bot with URL Shortener
-Fixed for Koyeb deployment
+Fixed for multiprocessing - NO asyncio.run() conflicts
 """
 
 import os
-import asyncio
 import string
 import random
 import requests
@@ -182,8 +181,8 @@ async def upload_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------- MAIN ----------------
-async def main():
-    """Initialize and run the bot"""
+def main():
+    """Initialize and run the bot - NO asyncio.run()"""
     # Build application
     app = Application.builder().token(BOT_TOKEN).build()
     
@@ -206,10 +205,10 @@ async def main():
     print(f"🔗 Shortener: {VIRALBOX_DOMAIN}")
     print(f"💾 Database: {MONGO_DB_NAME}")
     
-    # Start polling
-    await app.run_polling(drop_pending_updates=True)
+    # Start polling (blocking call - manages its own event loop)
+    app.run_polling(drop_pending_updates=True)
 
 
 # ---------------- ENTRY POINT ----------------
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
