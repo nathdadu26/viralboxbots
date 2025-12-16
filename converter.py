@@ -1,5 +1,7 @@
-# bot.py  (Polling Mode - VPS Ready)
-# Logic identical to converter.js (no behaviour change)
+#!/usr/bin/env python3
+"""
+Converter Bot - Fixed for Koyeb
+"""
 
 import os
 import time
@@ -7,7 +9,6 @@ import requests
 from urllib.parse import urlparse
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from datetime import datetime
 
 load_dotenv()
 
@@ -19,14 +20,17 @@ DB_NAME = os.getenv("MONGO_DB_NAME", "viralbox_db")
 VIRALBOX_DOMAIN = os.getenv("VIRALBOX_DOMAIN", "viralbox.in")
 
 if not BOT_TOKEN or not MONGODB_URI:
-    raise RuntimeError("BOT_TOKEN and MONGODB_URI must be in .env")
+    raise RuntimeError("CONVERTER_BOT_TOKEN and MONGODB_URI must be set")
 
 # ------------------ DB SETUP ------------------ #
-client = MongoClient(MONGODB_URI)
-db = client[DB_NAME]
-
-links_col = db["links"]          # { longURL, shortURL }
-user_apis_col = db["user_apis"]  # { userId, apiKey }
+try:
+    client = MongoClient(MONGODB_URI)
+    db = client[DB_NAME]
+    links_col = db["links"]
+    user_apis_col = db["user_apis"]
+    print(f"✅ Converter: Connected to MongoDB: {DB_NAME}")
+except Exception as e:
+    raise RuntimeError(f"❌ Converter: MongoDB connection failed: {e}")
 
 
 # ------------------ HELPERS ------------------ #
@@ -48,10 +52,14 @@ def is_viralbox(url):
 
 
 def send_message(chat_id, text):
-    requests.post(
-        f"{TELEGRAM_API}/sendMessage",
-        json={"chat_id": chat_id, "text": text}
-    )
+    try:
+        requests.post(
+            f"{TELEGRAM_API}/sendMessage",
+            json={"chat_id": chat_id, "text": text},
+            timeout=10
+        )
+    except Exception as e:
+        print(f"❌ Converter: Send message failed: {e}")
 
 
 def send_media(chat_id, mtype, file_id, caption=None):
@@ -68,9 +76,12 @@ def send_media(chat_id, mtype, file_id, caption=None):
         send_message(chat_id, caption or "")
         return
 
-    payload = {"chat_id": chat_id, "caption": caption}
-    payload[mtype] = file_id
-    requests.post(f"{TELEGRAM_API}/{endpoint}", json=payload)
+    try:
+        payload = {"chat_id": chat_id, "caption": caption}
+        payload[mtype] = file_id
+        requests.post(f"{TELEGRAM_API}/{endpoint}", json=payload, timeout=10)
+    except Exception as e:
+        print(f"❌ Converter: Send media failed: {e}")
 
 
 # ------------------ DATABASE FUNCTIONS ------------------ #
@@ -115,7 +126,8 @@ def short_with_user_token(apiKey, longURL):
 
         return None
 
-    except Exception:
+    except Exception as e:
+        print(f"❌ Converter: Shortening failed: {e}")
         return None
 
 
@@ -132,16 +144,16 @@ def process_message(msg):
         user_api = get_api_key(user_id)
         
         if user_api:
-            send_message(chat_id, "ðŸ“ Send A Link To Convert !")
+            send_message(chat_id, "🔗 Send A Link To Convert !")
         else:
             send_message(chat_id,
-f"ðŸ‘‹ Welcome {name} to viralbox.in Bot!\n\n"
+f"👋 Welcome {name} to viralbox.in Bot!\n\n"
 f"I am Link Converter Bot.\n\n"
-f"1ï¸âƒ£ Create an Account on viralbox.in\n"
-f"2ï¸âƒ£ Go To ðŸ‘‰ https://viralbox.in/member/tools/api\n"
-f"3ï¸âƒ£ Copy your API Key\n"
-f"4ï¸âƒ£ Send /set_api <API_KEY>\n"
-f"5ï¸âƒ£ Send me any viralbox.in link\n\n"
+f"1️⃣ Create an Account on viralbox.in\n"
+f"2️⃣ Go To 👉 https://viralbox.in/member/tools/api\n"
+f"3️⃣ Copy your API Key\n"
+f"4️⃣ Send /set_api <API_KEY>\n"
+f"5️⃣ Send me any viralbox.in link\n\n"
 f"/set_api - Save your API Key\n"
 f"/help - Support - @viralbox_support")
         return
@@ -153,18 +165,18 @@ f"/help - Support - @viralbox_support")
     if text.startswith("/set_api"):
         parts = text.split()
         if len(parts) < 2:
-            send_message(chat_id, "âŒ Correct usage: /set_api <API_KEY>")
+            send_message(chat_id, "❌ Correct usage: /set_api <API_KEY>")
             return
 
         apikey = parts[1].strip()
         save_api_key(user_id, apikey)
-        send_message(chat_id, "âœ… API Key Saved Successfully!")
+        send_message(chat_id, "✅ API Key Saved Successfully!")
         return
 
     # -------- Ensure API Key Exists -------- #
     user_api = get_api_key(user_id)
     if not user_api:
-        send_message(chat_id, "âŒ Please set your API key first:\n/set_api <API_KEY>")
+        send_message(chat_id, "❌ Please set your API key first:\n/set_api <API_KEY>")
         return
 
     # -------- URL Extraction -------- #
@@ -184,7 +196,7 @@ f"/help - Support - @viralbox_support")
             break
 
     if not urls:
-        send_message(chat_id, "âŒ Please send a valid viralbox.in link.")
+        send_message(chat_id, "❌ Please send a valid viralbox.in link.")
         return
 
     # -------- Process All URLs -------- #
@@ -192,24 +204,24 @@ f"/help - Support - @viralbox_support")
     
     for url in urls:
         if not is_viralbox(url):
-            send_message(chat_id, f"âŒ Only viralbox.in links are supported! (Invalid: {url})")
+            send_message(chat_id, f"❌ Only viralbox.in links are supported! (Invalid: {url})")
             return
 
         longURL = find_long_url(url)
         if not longURL:
-            send_message(chat_id, f"âŒ This link does not exist in database. ({url})")
+            send_message(chat_id, f"❌ This link does not exist in database. ({url})")
             return
 
         newShort = short_with_user_token(user_api, longURL)
         if not newShort:
-            send_message(chat_id, f"âŒ Failed to convert link using your API key. ({url})")
+            send_message(chat_id, f"❌ Failed to convert link using your API key. ({url})")
             return
 
         save_converted(longURL, newShort)
         converted_links.append(newShort)
 
     # -------- Send Converted Links -------- #
-    response_text = "\n".join([f"âœ…Video Link\n{link}" for link in converted_links])
+    response_text = "\n".join([f"✅Video Link\n{link}" for link in converted_links])
 
     if not media_type:
         send_message(chat_id, response_text)
@@ -220,7 +232,7 @@ f"/help - Support - @viralbox_support")
 # ------------------ BOT POLLING LOOP ------------------ #
 
 def polling_loop():
-    print("Bot Running in Polling Modeâ€¦")
+    print("🔄 Converter Bot: Starting polling mode...")
     offset = None
 
     while True:
@@ -235,11 +247,14 @@ def polling_loop():
                 offset = upd["update_id"] + 1
 
                 if "message" in upd:
-                    process_message(upd["message"])
+                    try:
+                        process_message(upd["message"])
+                    except Exception as e:
+                        print(f"❌ Converter: Message processing error: {e}")
 
         except Exception as e:
-            print("Error:", e)
-            time.sleep(2)
+            print(f"❌ Converter: Polling error: {e}")
+            time.sleep(5)
 
 
 # ------------------ START BOT ------------------ #
