@@ -1,18 +1,7 @@
 #!/usr/bin/env python3
 """
 Telegram File Server Bot (MongoDB + Force Join)
-
-Features:
-- Only works via deep links: https://t.me/<BOT_USERNAME>?start=<mapping>
-- mapping -> MongoDB lookup -> message_id
-- Copies file from STORAGE_CHANNEL to user
-- Force Join enabled:
-  * Checks if user joined F_SUB_CHANNEL_ID
-  * If not, shows two buttons:
-      - Join Now âœ… (channel link)
-      - Join & Get File â™»ï¸ (re-check)
-
-Bot does NOT accept any files or commands except /start.
+Fixed for multiprocessing - NO asyncio.run() conflicts
 """
 
 import os
@@ -29,14 +18,18 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("FILE_SERVER_BOT_TOKEN")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
-STORAGE_CHANNEL_ID = int(os.getenv("STORAGE_CHANNEL_ID"))
+STORAGE_CHANNEL_ID = int(os.getenv("STORAGE_CHANNEL_ID", "0"))
 
-F_SUB_CHANNEL_ID = int(os.getenv("F_SUB_CHANNEL_ID"))
-F_SUB_CHANNEL_LINK = os.getenv("F_SUB_CHANNEL_LINK")
+F_SUB_CHANNEL_ID = int(os.getenv("F_SUB_CHANNEL_ID", "0"))
+F_SUB_CHANNEL_LINK = os.getenv("F_SUB_CHANNEL_LINK", "")
 
 MONGO_URI = os.getenv("MONGODB_URI")
-MONGO_DB = os.getenv("MONGO_DB_NAME")
+MONGO_DB = os.getenv("MONGO_DB_NAME", "viralbox_db")
 MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "mappings")
+
+# Validate config
+if not all([BOT_TOKEN, BOT_USERNAME, STORAGE_CHANNEL_ID, F_SUB_CHANNEL_ID, F_SUB_CHANNEL_LINK, MONGO_URI]):
+    raise RuntimeError("Missing required environment variables for File Server Bot")
 
 # ---------------- LOGGING ----------------
 logging.basicConfig(
@@ -55,9 +48,9 @@ try:
     mongo_client = MongoClient(MONGO_URI)
     mongo_db = mongo_client[MONGO_DB]
     mappings_col = mongo_db[MONGO_COLLECTION]
-    logger.info("âœ… MongoDB connected successfully")
+    logger.info("✅ MongoDB connected successfully")
 except PyMongoError as e:
-    logger.error(f"âŒ MongoDB connection failed: {e}")
+    logger.error(f"❌ MongoDB connection failed: {e}")
     raise RuntimeError(f"MongoDB connection failed: {e}")
 
 # ---------------- UTIL ----------------
@@ -71,8 +64,8 @@ async def is_user_joined(bot, user_id: int) -> bool:
 
 def join_keyboard(mapping: str):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Join Now âœ…", url=F_SUB_CHANNEL_LINK)],
-        [InlineKeyboardButton("Join & Get File â™»ï¸", url=f"https://t.me/{BOT_USERNAME}?start={mapping}")]
+        [InlineKeyboardButton("Join Now ✅", url=F_SUB_CHANNEL_LINK)],
+        [InlineKeyboardButton("Join & Get File ♻️", url=f"https://t.me/{BOT_USERNAME}?start={mapping}")]
     ])
 
 # ---------------- START HANDLER ----------------
@@ -81,9 +74,9 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or "Unknown"
     
     if not context.args:
-        logger.warning(f"âš ï¸ Invalid access attempt by user {user_id} (@{username}) - No mapping provided")
+        logger.warning(f"⚠️ Invalid access attempt by user {user_id} (@{username}) - No mapping provided")
         await update.message.reply_text(
-            "âŒ Invalid access.\nUse a valid file link."
+            "❌ Invalid access.\nUse a valid file link."
         )
         return
 
@@ -92,9 +85,9 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Force Join Check
     joined = await is_user_joined(context.bot, user_id)
     if not joined:
-        logger.info(f"ðŸ“Œ Force Join triggered for user {user_id} (@{username}) - mapping: {mapping}")
+        logger.info(f"🔌 Force Join triggered for user {user_id} (@{username}) - mapping: {mapping}")
         await update.message.reply_text(
-            "âš ï¸ You have not joined the main channel yet.\nTo access this file, please join the main channel first ðŸ‘‡",
+            "⚠️ You have not joined the main channel yet.\nTo access this file, please join the main channel first 👇",
             reply_markup=join_keyboard(mapping),
             disable_web_page_preview=True,
         )
@@ -103,8 +96,8 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # MongoDB Lookup
     doc = mappings_col.find_one({"mapping": mapping})
     if not doc or "message_id" not in doc:
-        logger.warning(f"âš ï¸ File not found for mapping: {mapping} (user: {user_id})")
-        await update.message.reply_text("âŒ File not found or link expired.")
+        logger.warning(f"⚠️ File not found for mapping: {mapping} (user: {user_id})")
+        await update.message.reply_text("❌ File not found or link expired.")
         return
 
     message_id = int(doc["message_id"])
@@ -121,30 +114,23 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_id=message_id,
         )
         
-        logger.info(f"âœ… File sent successfully to user {user_id} (@{username}) - message_id: {message_id}")
+        logger.info(f"✅ File sent successfully to user {user_id} (@{username}) - message_id: {message_id}")
 
     except Exception as e:
-        logger.error(f"âŒ Failed to copy message for user {user_id} (@{username}): {str(e)}")
-        await update.message.reply_text("âŒ File not found or access denied.")
+        logger.error(f"❌ Failed to copy message for user {user_id} (@{username}): {str(e)}")
+        await update.message.reply_text("❌ File not found or access denied.")
 
 
 # ---------------- MAIN ----------------
 def main():
-    if not all([
-        BOT_TOKEN,
-        STORAGE_CHANNEL_ID,
-        F_SUB_CHANNEL_ID,
-        F_SUB_CHANNEL_LINK,
-        MONGO_URI,
-    ]):
-        logger.error("âŒ Missing required .env configuration")
-        raise RuntimeError("Missing required .env configuration")
-
+    """Initialize and run the bot - NO asyncio.run()"""
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_handler))
 
-    logger.info("ðŸš€ File Server Bot (Force Join + MongoDB) running...")
-    app.run_polling()
+    logger.info("🚀 File Server Bot (Force Join + MongoDB) running...")
+    
+    # Start polling (blocking call - manages its own event loop)
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
